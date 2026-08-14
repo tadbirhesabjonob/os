@@ -2,8 +2,21 @@
 <html lang="fa" dir="rtl" data-theme="dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>TadbirHesab Business OS</title>
+
+<!-- PWA: manifest + icons so "Add to Home Screen" installs like a real app -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#131018">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TadbirHesab">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+
 <link rel="preconnect" href="https://cdnjs.cloudflare.com">
 <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <style>
@@ -153,10 +166,9 @@ a{color:inherit;}
 }
 .brand-mark{
   width:32px; height:32px; border-radius:8px;
-  background:linear-gradient(135deg, var(--accent), var(--accent-2));
-  display:flex; align-items:center; justify-content:center;
-  font-weight:700; color:#fff; font-size:14px; flex-shrink:0;
+  overflow:hidden; flex-shrink:0;
 }
+.brand-mark img{ width:100%; height:100%; object-fit:cover; display:block; }
 .brand-name{font-weight:700; font-size:13.5px; letter-spacing:.2px;}
 .brand-sub{font-size:10.5px; color:var(--text-faint); margin-top:1px;}
 
@@ -479,7 +491,7 @@ tr:hover td{background:var(--panel-2);}
 <div class="auth-screen" id="authScreen">
   <div class="auth-box">
     <div class="auth-brand">
-      <div class="brand-mark">ت</div>
+      <div class="brand-mark"><img src="icons/logo-256.png" alt="TadbirHesab" /></div>
       <h2>TadbirHesab OS</h2>
       <p>تدبیرحساب جنوب</p>
     </div>
@@ -521,7 +533,7 @@ tr:hover td{background:var(--panel-2);}
   <div class="sidebar-scrim" id="scrim"></div>
   <nav class="sidebar" id="sidebar">
     <div class="brand">
-      <div class="brand-mark">ت</div>
+      <div class="brand-mark"><img src="icons/logo-256.png" alt="TadbirHesab" /></div>
       <div>
         <div class="brand-name">TadbirHesab OS</div>
         <div class="brand-sub">تدبیرحساب جنوب</div>
@@ -558,7 +570,7 @@ tr:hover td{background:var(--panel-2);}
   <div class="main">
     <div class="topbar">
       <button class="menu-btn" id="menuBtn">☰</button>
-      <div class="brand-mark" style="width:28px;height:28px;font-size:12px;">ت</div>
+      <div class="brand-mark" style="width:28px;height:28px;"><img src="icons/logo-256.png" alt="TadbirHesab" /></div>
       <div>
         <h1 id="pageTitle">خانه</h1>
         <div class="sub" id="pageSub">نمای کلی وضعیت امروز</div>
