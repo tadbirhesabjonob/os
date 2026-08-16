@@ -840,7 +840,7 @@ function setView(view, param){
   root.innerHTML = '';
   location.hash = view + (param? ('/'+param) : '');
   const renderers = {
-    home: renderHome, tasks: renderTasks, projects: renderProjects,
+    home: renderHome, tasks: (r)=>renderTasks(r, param), projects: renderProjects,
     clients: (r)=>param? renderClientDetail(param, r): renderClients(r),
     feed: renderFeed, chat: renderChat, reports: renderReports, activity: renderActivity,
     team: renderTeam
@@ -970,10 +970,21 @@ function recentActivityFeed(limit=5){
   db.announcements.forEach(a=> items.push({ time: a.created_at, text: `پیام مدیریت جدیدی توسط ${userName(a.author_id)} منتشر شد` }));
   return items.filter(i=>i.time).sort((a,b)=> new Date(b.time) - new Date(a.time)).slice(0, limit);
 }
+function todayJalaliString(){
+  // Returns today's date as YYYY/MM/DD in the Jalali calendar, zero-padded,
+  // matching the format tasks store their deadline in — so string comparison
+  // ("2 by 2 digit blocks") sorts correctly.
+  const parts = new Intl.DateTimeFormat('fa-IR-u-nu-latn', { year:'numeric', month:'2-digit', day:'2-digit' }).formatToParts(new Date());
+  const y = parts.find(p=>p.type==='year').value;
+  const m = parts.find(p=>p.type==='month').value;
+  const d = parts.find(p=>p.type==='day').value;
+  return `${y}/${m}/${d}`;
+}
 function renderHome(root){
   const me = currentUser();
-  const overdue = db.tasks.filter(t=>!t.done && t.deadline && t.deadline < '1404/05/13').length;
-  const activeProjects = db.projects.filter(p=>p.status!=='انجام شده').length;
+  const today = todayJalaliString();
+  const overdue = db.tasks.filter(t=>!t.done && t.deadline && t.deadline < today).length;
+  const doneTasks = db.tasks.filter(t=>t.done).length;
   const activeClients = db.clients.filter(c=>c.status==='فعال').length;
   const openTasks = db.tasks.filter(t=>!t.done).length;
   const myTasks = db.tasks.filter(t=>!t.done && t.assignee_id===me.id).slice(0,5);
@@ -989,11 +1000,11 @@ function renderHome(root){
         </div>
       </div>
       <div class="kpi-card">
-        ${donutSVG(activeProjects, db.projects.length || 1, 'var(--accent-2)')}
+        ${donutSVG(doneTasks, db.tasks.length || 1, 'var(--accent-2)')}
         <div class="kpi-body">
-          <div class="kpi-label">پروژه‌های فعال</div>
-          <div class="kpi-value">${activeProjects}</div>
-          <div class="kpi-trend">از ${db.projects.length} پروژه</div>
+          <div class="kpi-label">تسک‌های انجام‌شده</div>
+          <div class="kpi-value">${doneTasks}</div>
+          <div class="kpi-trend">از ${db.tasks.length} تسک</div>
         </div>
       </div>
       <div class="kpi-card">
@@ -1004,12 +1015,12 @@ function renderHome(root){
           <div class="kpi-trend">${overdue} مورد عقب‌افتاده</div>
         </div>
       </div>
-      <div class="kpi-card">
+      <div class="kpi-card" ${overdue>0? 'style="cursor:pointer;" onclick="setView(\'tasks\',\'overdue\')"':''}>
         ${donutSVG(overdue, openTasks || 1, 'var(--danger)')}
         <div class="kpi-body">
           <div class="kpi-label">تسک‌های عقب‌افتاده</div>
           <div class="kpi-value" style="color:${overdue>0?'var(--danger)':'inherit'}">${overdue}</div>
-          <div class="kpi-trend ${overdue>0?'down':''}">${overdue>0?'نیاز به پیگیری فوری':'وضعیت مطلوب'}</div>
+          <div class="kpi-trend ${overdue>0?'down':''}">${overdue>0?'برای مشاهده کلیک کنید':'وضعیت مطلوب'}</div>
         </div>
       </div>
     </div>
@@ -1080,6 +1091,9 @@ function taskRowEl(t){
   el.className='row-item';
   const proj = db.projects.find(p=>p.id===t.project_id);
   const cName = proj ? clientName(proj.client_id) : '—';
+  const today = todayJalaliString();
+  const isOverdue = !t.done && t.deadline && t.deadline < today;
+  el.style.cursor = 'pointer';
   el.innerHTML = `
     <div class="row-check ${t.done?'done':''}">${t.done?'✓':''}</div>
     <div class="row-main">
@@ -1088,7 +1102,7 @@ function taskRowEl(t){
         <span>🧾 ${cName}</span>
         <span>📁 ${projectName(t.project_id)}</span>
         <span>👤 ${userName(t.assignee_id)}</span>
-        <span>📅 ${t.deadline || '—'}</span>
+        <span style="${isOverdue? 'color:var(--danger); font-weight:700;':''}">${isOverdue? '⚠️ ':'📅 '}${t.deadline || '—'}</span>
       </div>
     </div>
     <span class="tag priority-${t.priority}">${t.priority}</span>
@@ -1110,18 +1124,22 @@ function taskRowEl(t){
     t.status = newStatus;
     setView('tasks');
   });
+  el.addEventListener('click', ()=> openTaskModal(t.id));
   return el;
 }
 
 let tasksFilterMine = false;
-function renderTasks(root){
+function renderTasks(root, mode){
   const me = currentUser();
-  const visibleTasks = tasksFilterMine ? db.tasks.filter(t=>t.assignee_id===me.id) : db.tasks;
+  const today = todayJalaliString();
+  const isOverdueMode = mode === 'overdue';
+  let visibleTasks = tasksFilterMine ? db.tasks.filter(t=>t.assignee_id===me.id) : db.tasks;
+  if(isOverdueMode){ visibleTasks = visibleTasks.filter(t=>!t.done && t.deadline && t.deadline < today); }
   root.innerHTML = `
     <div class="panel-head" style="margin-bottom:12px; gap:8px; flex-wrap:wrap;">
-      <div class="panel-title">تسک‌ها <span class="cnt">(${visibleTasks.length})</span></div>
-      <div style="display:flex; gap:8px; align-items:center;">
-        <button class="btn-ghost" id="taskFilterBtn">${tasksFilterMine? '👥 نمایش همه' : '👤 فقط وظایف من'}</button>
+      <div class="panel-title">${isOverdueMode? '⚠️ تسک‌های عقب‌افتاده' : 'تسک‌ها'} <span class="cnt">(${visibleTasks.length})</span></div>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        ${isOverdueMode? `<button class="btn-ghost" onclick="setView('tasks')">✕ حذف فیلتر</button>` : `<button class="btn-ghost" id="taskFilterBtn">${tasksFilterMine? '👥 نمایش همه' : '👤 فقط وظایف من'}</button>`}
         <button class="btn-primary" onclick="openTaskModal()">+ تسک جدید</button>
       </div>
     </div>
@@ -1129,13 +1147,15 @@ function renderTasks(root){
       <div class="row-list" id="taskList"></div>
     </div>
   `;
-  root.querySelector('#taskFilterBtn').addEventListener('click', ()=>{
-    tasksFilterMine = !tasksFilterMine;
-    setView('tasks');
-  });
+  if(!isOverdueMode){
+    root.querySelector('#taskFilterBtn').addEventListener('click', ()=>{
+      tasksFilterMine = !tasksFilterMine;
+      setView('tasks');
+    });
+  }
   const list = root.querySelector('#taskList');
   const sorted = [...visibleTasks].sort((a,b)=> (a.done?1:0) - (b.done?1:0));
-  if(!sorted.length){ list.innerHTML='<div class="empty">تسکی یافت نشد</div>'; }
+  if(!sorted.length){ list.innerHTML = `<div class="empty">${isOverdueMode? 'تسک عقب‌افتاده‌ای وجود ندارد 🎉' : 'تسکی یافت نشد'}</div>`; }
   sorted.forEach(t=> list.appendChild(taskRowEl(t)));
 }
 
@@ -1143,38 +1163,46 @@ function projectsForClient(clientId){
   return db.projects.filter(p=>p.client_id===clientId);
 }
 
-function openTaskModal(){
+function openTaskModal(taskId){
   if(!db.clients.length){ toast('ابتدا یک مشتری ایجاد کنید'); return; }
+  const t = taskId ? db.tasks.find(x=>x.id===taskId) : null;
+  const proj = t ? db.projects.find(p=>p.id===t.project_id) : null;
+  const preselectedClientId = proj ? proj.client_id : (db.clients[0] && db.clients[0].id);
   openModal(`
-    <div class="modal-head"><h3>تسک جدید</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
-    <div class="field"><label>عنوان تسک</label><input id="ntTitle" placeholder="مثلاً بررسی اسناد خرداد" /></div>
+    <div class="modal-head"><h3>${t?'ویرایش تسک':'تسک جدید'}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="field"><label>عنوان تسک</label><input id="ntTitle" value="${t? t.title.replace(/"/g,'&quot;'):''}" placeholder="مثلاً بررسی اسناد خرداد" /></div>
     <div class="field-row">
-      <div class="field"><label>مشتری</label><select id="ntClient" onchange="onTaskClientChange()">${db.clients.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select></div>
+      <div class="field"><label>مشتری</label><select id="ntClient" onchange="onTaskClientChange()">${db.clients.map(c=>`<option value="${c.id}" ${preselectedClientId===c.id?'selected':''}>${c.name}</option>`).join('')}</select></div>
       <div class="field"><label>پروژه</label><select id="ntProject"></select></div>
     </div>
     <div class="field-row">
-      <div class="field"><label>مسئول</label><select id="ntAssignee">${db.profiles.map(u=>`<option value="${u.id}">${u.full_name}</option>`).join('')}</select></div>
-      <div class="field"><label>اولویت</label><select id="ntPriority"><option>بالا</option><option selected>متوسط</option><option>پایین</option></select></div>
+      <div class="field"><label>مسئول</label><select id="ntAssignee">${db.profiles.map(u=>`<option value="${u.id}" ${t && t.assignee_id===u.id?'selected':''}>${u.full_name}</option>`).join('')}</select></div>
+      <div class="field"><label>اولویت</label><select id="ntPriority">
+        <option ${t && t.priority==='بالا'?'selected':''}>بالا</option>
+        <option ${!t || t.priority==='متوسط'?'selected':''}>متوسط</option>
+        <option ${t && t.priority==='پایین'?'selected':''}>پایین</option>
+      </select></div>
     </div>
-    <div class="field"><label>مهلت (شمسی)</label><input id="ntDeadline" placeholder="1404/06/01" /></div>
+    <div class="field"><label>مهلت (شمسی)</label><input id="ntDeadline" value="${t && t.deadline? t.deadline:''}" placeholder="1404/06/01" /></div>
     <div class="modal-actions">
+      ${t? `<button class="btn-ghost" style="color:var(--danger); margin-inline-end:auto;" onclick="deleteTask('${t.id}')">حذف تسک</button>` : ''}
       <button class="btn-ghost" onclick="closeModal()">انصراف</button>
-      <button class="btn-primary" onclick="createTask()">ایجاد تسک</button>
+      <button class="btn-primary" onclick="saveTask(${t? `'${t.id}'`:'null'})">${t?'ذخیره تغییرات':'ایجاد تسک'}</button>
     </div>
   `);
-  onTaskClientChange();
+  onTaskClientChange(t ? t.project_id : null);
 }
-function onTaskClientChange(){
+function onTaskClientChange(preselectProjectId){
   const clientId = document.getElementById('ntClient').value;
   const projSel = document.getElementById('ntProject');
   const projs = projectsForClient(clientId);
   if(!projs.length){
     projSel.innerHTML = `<option value="">— پروژه‌ای برای این مشتری نیست —</option>`;
   } else {
-    projSel.innerHTML = projs.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+    projSel.innerHTML = projs.map(p=>`<option value="${p.id}" ${preselectProjectId===p.id?'selected':''}>${p.name}</option>`).join('');
   }
 }
-async function createTask(){
+async function saveTask(taskId){
   const title = document.getElementById('ntTitle').value.trim();
   if(!title){ toast('عنوان تسک را وارد کنید'); return; }
   const project_id = document.getElementById('ntProject').value;
@@ -1184,16 +1212,29 @@ async function createTask(){
     project_id,
     assignee_id: document.getElementById('ntAssignee').value,
     priority: document.getElementById('ntPriority').value,
-    status: 'برنامه‌ریزی', done:false,
-    deadline: document.getElementById('ntDeadline').value || null,
-    created_by: currentProfile.id
+    deadline: document.getElementById('ntDeadline').value || null
   };
-  const { data, error } = await sb.from('tasks').insert(payload).select().single();
+  if(taskId){
+    const { data, error } = await sb.from('tasks').update(payload).eq('id', taskId).select().single();
+    if(error){ toast('خطا: ' + error.message); return; }
+    const idx = db.tasks.findIndex(x=>x.id===taskId);
+    db.tasks[idx] = data;
+    closeModal(); toast('تغییرات ذخیره شد'); setView('tasks');
+  } else {
+    payload.status = 'برنامه‌ریزی';
+    payload.done = false;
+    payload.created_by = currentProfile.id;
+    const { data, error } = await sb.from('tasks').insert(payload).select().single();
+    if(error){ toast('خطا: ' + error.message); return; }
+    db.tasks.unshift(data);
+    closeModal(); toast('تسک ایجاد شد'); setView('tasks');
+  }
+}
+async function deleteTask(taskId){
+  const { error } = await sb.from('tasks').delete().eq('id', taskId);
   if(error){ toast('خطا: ' + error.message); return; }
-  db.tasks.unshift(data);
-  closeModal();
-  toast('تسک ایجاد شد');
-  setView('tasks');
+  db.tasks = db.tasks.filter(x=>x.id!==taskId);
+  closeModal(); toast('تسک حذف شد'); setView('tasks');
 }
 
 /* ============================================================
@@ -1207,77 +1248,67 @@ function renderProjects(root){
       <div class="panel-title">پروژه‌ها <span class="cnt">(${db.projects.length})</span></div>
       <button class="btn-primary" onclick="openProjectModal()">+ پروژه جدید</button>
     </div>
-    <div class="kanban" id="kanban"></div>
+    <div class="panel" style="padding:0; overflow-x:auto;">
+      <table>
+        <thead><tr><th>نام پروژه</th><th>مشتری</th><th>تعداد تسک</th><th></th></tr></thead>
+        <tbody id="projectTbody"></tbody>
+      </table>
+    </div>
   `;
-  const kb = root.querySelector('#kanban');
-  STATUSES.forEach(st=>{
-    const col = document.createElement('div');
-    col.className='kanban-col';
-    col.dataset.status = st;
-    const items = db.projects.filter(p=>p.status===st);
-    col.innerHTML = `<div class="kanban-col-head">${st} <span>${items.length}</span></div><div class="kanban-col-body"></div>`;
-    const body = col.querySelector('.kanban-col-body');
-    if(!items.length){ body.innerHTML = `<div class="empty" style="padding:14px 4px;">—</div>`; }
-    items.forEach(p=>{
-      const card = document.createElement('div');
-      card.className='kcard';
-      card.draggable = true;
-      card.dataset.id = p.id;
-      card.innerHTML = `
-        <div class="kcard-title">${p.name}</div>
-        <div class="kcard-meta">
-          <span class="tag" style="background:var(--panel-2); color:var(--text-dim);">🧾 ${clientName(p.client_id)}</span>
-        </div>
-        <div style="margin-top:8px; height:5px; background:var(--panel); border-radius:4px; overflow:hidden;">
-          <div style="height:100%; width:${p.progress}%; background:var(--accent);"></div>
-        </div>
-        <div style="margin-top:6px; font-size:10.5px; color:var(--text-faint);">📅 ${p.deadline || '—'} · ${p.progress}٪</div>
-      `;
-      card.addEventListener('dragstart', ()=> card.classList.add('dragging'));
-      card.addEventListener('dragend', ()=> card.classList.remove('dragging'));
-      body.appendChild(card);
-    });
-    col.addEventListener('dragover', e=>{ e.preventDefault(); col.classList.add('drag-over'); });
-    col.addEventListener('dragleave', ()=> col.classList.remove('drag-over'));
-    col.addEventListener('drop', async e=>{
-      e.preventDefault(); col.classList.remove('drag-over');
-      const dragging = document.querySelector('.kcard.dragging');
-      if(!dragging) return;
-      const proj = db.projects.find(p=>p.id===dragging.dataset.id);
-      if(proj){
-        const newProgress = st==='انجام شده' ? 100 : proj.progress;
-        const { error } = await sb.from('projects').update({ status: st, progress: newProgress }).eq('id', proj.id);
-        if(error){ toast('خطا: ' + error.message); return; }
-        proj.status = st;
-        proj.progress = newProgress;
-        setView('projects');
-      }
-    });
-    kb.appendChild(col);
+  const tb = root.querySelector('#projectTbody');
+  if(!db.projects.length){ tb.innerHTML = '<tr><td colspan="4"><div class="empty">پروژه‌ای ثبت نشده</div></td></tr>'; }
+  db.projects.forEach(p=>{
+    const taskCount = db.tasks.filter(t=>t.project_id===p.id).length;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><b>${p.name}</b></td>
+      <td style="color:var(--text-dim)">🧾 ${clientName(p.client_id)}</td>
+      <td style="color:var(--text-faint)">${taskCount}</td>
+      <td style="text-align:left;"><button class="btn-ghost" style="padding:5px 10px; min-height:auto;" onclick="openProjectModal('${p.id}')">✏️ ویرایش</button></td>
+    `;
+    tb.appendChild(tr);
   });
 }
-function openProjectModal(){
+function openProjectModal(projectId){
   if(!db.clients.length){ toast('ابتدا یک مشتری ایجاد کنید'); return; }
+  const p = projectId ? db.projects.find(x=>x.id===projectId) : null;
   openModal(`
-    <div class="modal-head"><h3>پروژه جدید</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
-    <div class="field"><label>نام پروژه</label><input id="npName" placeholder="مثلاً اظهارنامه تابستان" /></div>
-    <div class="field"><label>مشتری</label><select id="npClient">${db.clients.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select></div>
-    <div class="field"><label>مهلت (شمسی)</label><input id="npDeadline" placeholder="1404/07/01" /></div>
+    <div class="modal-head"><h3>${p?'ویرایش پروژه':'پروژه جدید'}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="field"><label>نام پروژه</label><input id="npName" value="${p? p.name.replace(/"/g,'&quot;'):''}" placeholder="مثلاً اظهارنامه مالیاتی" /></div>
+    <div class="field"><label>مشتری</label><select id="npClient">${db.clients.map(c=>`<option value="${c.id}" ${p && p.client_id===c.id?'selected':''}>${c.name}</option>`).join('')}</select></div>
     <div class="modal-actions">
+      ${p? `<button class="btn-ghost" style="color:var(--danger); margin-inline-end:auto;" onclick="deleteProject('${p.id}')">حذف پروژه</button>` : ''}
       <button class="btn-ghost" onclick="closeModal()">انصراف</button>
-      <button class="btn-primary" onclick="createProject()">ایجاد پروژه</button>
+      <button class="btn-primary" onclick="saveProject(${p? `'${p.id}'`:'null'})">${p?'ذخیره تغییرات':'ایجاد پروژه'}</button>
     </div>
   `);
 }
-async function createProject(){
+async function saveProject(projectId){
   const name = document.getElementById('npName').value.trim();
   if(!name){ toast('نام پروژه را وارد کنید'); return; }
-  const payload = { name, client_id:document.getElementById('npClient').value,
-    status:'برنامه‌ریزی', deadline:document.getElementById('npDeadline').value||null, progress:0 };
-  const { data, error } = await sb.from('projects').insert(payload).select().single();
+  const payload = { name, client_id:document.getElementById('npClient').value };
+  if(projectId){
+    const { data, error } = await sb.from('projects').update(payload).eq('id', projectId).select().single();
+    if(error){ toast('خطا: ' + error.message); return; }
+    const idx = db.projects.findIndex(x=>x.id===projectId);
+    db.projects[idx] = data;
+    closeModal(); toast('تغییرات ذخیره شد'); setView('projects');
+  } else {
+    payload.status = 'در حال انجام';
+    payload.progress = 0;
+    const { data, error } = await sb.from('projects').insert(payload).select().single();
+    if(error){ toast('خطا: ' + error.message); return; }
+    db.projects.unshift(data);
+    closeModal(); toast('پروژه ایجاد شد'); setView('projects');
+  }
+}
+async function deleteProject(projectId){
+  const linkedTasks = db.tasks.filter(t=>t.project_id===projectId).length;
+  if(linkedTasks > 0){ toast(`این پروژه ${linkedTasks} تسک دارد — ابتدا تسک‌ها را حذف یا منتقل کنید`); return; }
+  const { error } = await sb.from('projects').delete().eq('id', projectId);
   if(error){ toast('خطا: ' + error.message); return; }
-  db.projects.unshift(data);
-  closeModal(); toast('پروژه ایجاد شد'); setView('projects');
+  db.projects = db.projects.filter(x=>x.id!==projectId);
+  closeModal(); toast('پروژه حذف شد'); setView('projects');
 }
 
 /* ============================================================
@@ -1329,6 +1360,7 @@ function renderClientDetail(id, root){
         <div class="detail-sub">${c.type} · مسئول پرونده: ${userName(c.owner_id)} · از ${c.since || '—'}</div>
       </div>
       <span class="status-pill status-${slug(c.status)}" style="margin-inline-start:auto;">${c.status}</span>
+      <button class="btn-ghost" onclick="openClientModal('${c.id}')">✏️ ویرایش</button>
     </div>
     <div class="tabs">
       <div class="tab active" data-t="overview">اطلاعات کلی</div>
@@ -1362,10 +1394,10 @@ function renderClientDetail(id, root){
       projects.forEach(p=>{
         const el = document.createElement('div');
         el.className='row-item';
+        el.onclick = ()=> openProjectModal(p.id);
         el.innerHTML = `
           <div class="row-main">
             <div class="row-title">${p.name}</div>
-            <div class="row-meta"><span>📅 ${p.deadline || '—'}</span><span>${p.progress}٪ تکمیل</span></div>
           </div>
           <span class="status-pill status-${slug(p.status)}">${p.status}</span>
         `;
@@ -1377,31 +1409,52 @@ function renderClientDetail(id, root){
   showTab('overview');
 }
 
-function openClientModal(){
+function openClientModal(clientId){
+  const c = clientId ? db.clients.find(x=>x.id===clientId) : null;
   openModal(`
-    <div class="modal-head"><h3>مشتری جدید</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
-    <div class="field"><label>نام مشتری / شرکت</label><input id="ncName" placeholder="مثلاً شرکت نمونه صنعت" /></div>
+    <div class="modal-head"><h3>${c? 'ویرایش مشتری':'مشتری جدید'}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+    <div class="field"><label>نام مشتری / شرکت</label><input id="ncName" value="${c? c.name.replace(/"/g,'&quot;'):''}" placeholder="مثلاً شرکت نمونه صنعت" /></div>
     <div class="field-row">
-      <div class="field"><label>نوع</label><select id="ncType"><option>شرکت</option><option>شخص حقیقی</option></select></div>
-      <div class="field"><label>مسئول پرونده</label><select id="ncOwner">${db.profiles.map(u=>`<option value="${u.id}">${u.full_name}</option>`).join('')}</select></div>
+      <div class="field"><label>نوع</label><select id="ncType">
+        <option ${c && c.type==='شرکت'?'selected':''}>شرکت</option>
+        <option ${c && c.type==='شخص حقیقی'?'selected':''}>شخص حقیقی</option>
+      </select></div>
+      <div class="field"><label>مسئول پرونده</label><select id="ncOwner">${db.profiles.map(u=>`<option value="${u.id}" ${c && c.owner_id===u.id?'selected':''}>${u.full_name}</option>`).join('')}</select></div>
     </div>
-    <div class="field"><label>شماره تماس</label><input id="ncPhone" placeholder="021-xxxxxxx" /></div>
+    <div class="field-row">
+      <div class="field"><label>وضعیت</label><select id="ncStatus">
+        <option ${c && c.status==='فعال'?'selected':''}>فعال</option>
+        <option ${c && c.status==='در انتظار پیگیری'?'selected':''}>در انتظار پیگیری</option>
+        <option ${c && c.status==='راکد'?'selected':''}>راکد</option>
+      </select></div>
+      <div class="field"><label>شماره تماس</label><input id="ncPhone" value="${c && c.phone? c.phone:''}" placeholder="021-xxxxxxx" /></div>
+    </div>
     <div class="modal-actions">
       <button class="btn-ghost" onclick="closeModal()">انصراف</button>
-      <button class="btn-primary" onclick="createClient()">ایجاد مشتری</button>
+      <button class="btn-primary" onclick="saveClient(${c? `'${c.id}'`:'null'})">${c?'ذخیره تغییرات':'ایجاد مشتری'}</button>
     </div>
   `);
 }
-async function createClient(){
+async function saveClient(clientId){
   const name = document.getElementById('ncName').value.trim();
   if(!name){ toast('نام مشتری را وارد کنید'); return; }
   const payload = { name, type:document.getElementById('ncType').value,
-    status:'فعال', owner_id:document.getElementById('ncOwner').value,
-    phone:document.getElementById('ncPhone').value||null, economic_code:null, since: new Date().toLocaleDateString('fa-IR') };
-  const { data, error } = await sb.from('clients').insert(payload).select().single();
-  if(error){ toast('خطا: ' + error.message); return; }
-  db.clients.unshift(data);
-  closeModal(); toast('مشتری ایجاد شد'); setView('clients');
+    status:document.getElementById('ncStatus').value, owner_id:document.getElementById('ncOwner').value,
+    phone:document.getElementById('ncPhone').value||null };
+  if(clientId){
+    const { data, error } = await sb.from('clients').update(payload).eq('id', clientId).select().single();
+    if(error){ toast('خطا: ' + error.message); return; }
+    const idx = db.clients.findIndex(x=>x.id===clientId);
+    db.clients[idx] = data;
+    closeModal(); toast('تغییرات ذخیره شد'); setView('clients', clientId);
+  } else {
+    payload.economic_code = null;
+    payload.since = new Date().toLocaleDateString('fa-IR');
+    const { data, error } = await sb.from('clients').insert(payload).select().single();
+    if(error){ toast('خطا: ' + error.message); return; }
+    db.clients.unshift(data);
+    closeModal(); toast('مشتری ایجاد شد'); setView('clients');
+  }
 }
 
 /* ============================================================
@@ -1462,21 +1515,9 @@ let activeChatConvId = null;
 let chatRealtimeChannel = null;
 
 async function findOrCreateDirectConversation(otherUserId){
-  // Find a conversation where both users are participants and it's not a group
-  const { data: myConvs } = await sb.from('conversation_participants').select('conversation_id').eq('user_id', currentProfile.id);
-  const myConvIds = (myConvs||[]).map(r=>r.conversation_id);
-  if(myConvIds.length){
-    const { data: shared } = await sb.from('conversation_participants').select('conversation_id').eq('user_id', otherUserId).in('conversation_id', myConvIds);
-    if(shared && shared.length){ return shared[0].conversation_id; }
-  }
-  // Create new conversation
-  const { data: conv, error: convErr } = await sb.from('conversations').insert({ is_group:false }).select().single();
-  if(convErr){ toast('خطا: ' + convErr.message); return null; }
-  await sb.from('conversation_participants').insert([
-    { conversation_id: conv.id, user_id: currentProfile.id },
-    { conversation_id: conv.id, user_id: otherUserId }
-  ]);
-  return conv.id;
+  const { data, error } = await sb.rpc('get_or_create_direct_conversation', { other_user_id: otherUserId });
+  if(error){ toast('خطا: ' + error.message); return null; }
+  return data;
 }
 
 async function renderChat(root){
